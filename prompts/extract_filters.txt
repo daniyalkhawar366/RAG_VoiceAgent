@@ -1,20 +1,26 @@
 Extract search filters from this car inventory query.
 Return a JSON object with ONLY the keys that are explicitly mentioned.
 Valid keys:
-- model_family (MUST be one of: {AVAILABLE_MODELS_LIST_STR}. DO NOT use "Genesis")
+- model_family (The Genesis model explicitly mentioned, e.g., "GV80", "GV70", "G80", "G90", etc. Automatically normalize phonetics like "gee vee seventy" to "GV70". DO NOT use "Genesis" as a model family.)
 - body_type ("SUV" or "Sedan" or "Coupe")
 - max_price (integer in SAR — extract from "under X", "less than X", "below X", "budget of X", "within X", "up to X", "not more than X")
 - min_price (integer in SAR — extract from "over X", "more than X", "above X", "at least X")
 - color (string)
 - fuel_type ("Electric" or "Petrol")
+- sort_by ("price_asc" if user wants the cheapest, most affordable, entry-level, lowest price, or is comparing prices. "price_desc" if user wants most expensive, flagship, top of the line.)
+
+CRITICAL CLEARING RULE: 
+If the customer's new query changes the subject, explicitly rejects an old filter, or asks a completely general question (e.g. "what is your cheapest car", "show me all cars"), you MUST output the exact string value "CLEAR" for any previously active filter that no longer applies.
 
 Price conversion rules:
 - "120k" or "120 thousand" → 120000
 - "1.2 million" → 1200000
 - Values already in full form (e.g. "120000") → use as-is
 
-Query: "{query}"
+=== CONTEXT ===
+Active Filters from previous turn: {active_filters}
+Customer said: "{customer_query}"
+Rewritten for search: "{rewritten_query}"
 
 Return ONLY valid JSON, nothing else.
-Example: {{"model_family": "GV80", "body_type": "SUV", "max_price": 260000}}
-If nothing is specified, return: {{}}
+If nothing is specified and no filters need clearing, return: {{}}

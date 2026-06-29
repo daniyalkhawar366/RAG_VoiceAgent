@@ -167,7 +167,9 @@ def run_tests():
         print(Fore.YELLOW + f"Expected: {expected}")
 
         # 1. Run RAG Retrieval
-        matches = retriever.query(query, n_results=5)
+        # We manually mock the LLM's sort extraction here since the test bypasses the LLM
+        sort_override = "price_asc" if "cheapest" in query.lower() else "price_desc" if "expensive" in query.lower() else None
+        matches = retriever.query(query, n_results=5, sort_by=sort_override)
 
         print(Fore.CYAN + f"RAG Retrieved {len(matches)} match(es):")
         for rank, m in enumerate(matches):

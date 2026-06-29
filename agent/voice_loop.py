@@ -212,17 +212,9 @@ async def main():
         t_intent        = time.perf_counter() - t_intent_start
         print(f"[Agent] (Intent Classified: {intent} | {t_intent:.2f}s)")
 
-        # Determine whether to execute RAG query for feature/price questions
-        use_rag = False
-        if intent in ["FEATURE_QUESTION", "PRICE_QUESTION"]:
-            mentions_model = any(
-                m.lower() in customer_query.lower()
-                for m in ["g80", "gv80", "g90", "gv70", "g70", "gv60", "gee vee", "g seventy", "g eighty", "g ninety"]
-            )
-            if mentions_model or not session.active_car or not session.last_retrieved_cars:
-                use_rag = True
-
-        # Route based on intent
+        # Determine whether to execute RAG query based on intent
+        # We now query RAG dynamically for all inventory and spec-related questions.
+        run_rag = intent in ["INVENTORY_SEARCH", "COMPARISON", "FEATURE_QUESTION", "PRICE_QUESTION"]        # Route based on intent
         retrieved_cars = []
         if intent == "EXIT":
             farewell = (
@@ -235,87 +227,36 @@ async def main():
             audio_handler.play_mp3_mci(temp_files[0])
             break
             
-        elif intent in ["INVENTORY_SEARCH", "COMPARISON"] or use_rag:
+        elif run_rag:
             print("[Agent] Searching CPO live inventory...")
-
-            # --- Pre-rewrite negation detection ---
-
-            # If the customer explicitly rejects a body type BEFORE the rewriter runs,
-            # pre-clear it from session.active_filters so the rewriter does NOT
-            # re-inject it into the query from stale session context.
-            # Example: "no SUVs are too expensive" -> clear body_type=SUV before rewriting.
-            _BODY_NEGATIONS = {
-                "suv":   ["no suv", "no suvs", "not suv", "not an suv", "not a suv",
-                          "suv too expensive", "suvs too expensive", "suv is too",
-                          "suvs are too", "not interested in suv"]
-            }
-            _cq_lower = customer_query.lower()
-            _current_body = session.active_filters.get("body_type", "").lower()
-            if _current_body and _current_body in _BODY_NEGATIONS:
-                if any(p in _cq_lower for p in _BODY_NEGATIONS[_current_body]):
-                    _old_bt = session.active_filters.pop("body_type", None)
-                    print(f"[Session] Pre-rewrite: cleared body_type={_old_bt} — customer negated it.")
-                    if session.active_car and session.active_car.get("metadata", {}).get("body_type", "").lower() == _current_body:
-                        session.active_car = None
-
             rewritten_query = llm_agent.rewrite_query_if_needed(customer_query, session)
 
             # Extract filters from this turn and MERGE into session (additive).
             # Only overwrite a key if the new query explicitly mentions it —
             # so "my budget is 100k" keeps body_type=SUV from the previous turn.
-            new_filters = llm_agent.extract_filters(rewritten_query)
+            new_filters = llm_agent.extract_filters(customer_query, rewritten_query, session)
             for k, v in new_filters.items():
-                if v is not None and v != "" and v != 0:
-                    session.active_filters[k] = v
-
-            # Override model filter if a model is explicitly mentioned and not negated
-            is_model_negated = any(sig in customer_query.lower() for sig in ["scratch", "forget", "no gv", "no g80", "no g90", "no g70", "not a", "not an"])
-            if not is_model_negated:
-                query_text_for_matching = f"{customer_query} {rewritten_query}".lower()
-                query_text_for_matching = query_text_for_matching.replace("gee vee", "gv").replace("g v", "gv")
-                query_text_for_matching = query_text_for_matching.replace("seventy", "70").replace("eighty", "80").replace("ninety", "90").replace("sixty", "60")
-                for m_name in ["gv80", "g80", "g90", "gv70", "g70", "gv60"]:
-                    pattern = m_name[0] + r"\s*" + m_name[1:] + r"\b"
-                    if m_name in query_text_for_matching or re.search(pattern, query_text_for_matching):
-                        session.active_filters["model_family"] = m_name.upper()
-                        break
-
-            # --- Explicit filter reset detection ---
-            # When the customer says 'scratch the SUV', 'something else', etc.
-            # clear stale filters that are NOT re-asserted by the new query.
-            # Prevents body_type=SUV leaking into 'cheapest car' after 'scratch the SUV'.
-            _RESET_SIGNALS = [
-                "scratch", "forget", "something else", "instead", "different",
-                "other than", "not a suv", "not an suv", "no suv", "no sedan",
-                "not a sedan", "change", "never mind", "nevermind",
-                "on second thought", "scrap that", "disregard", "actually no",
-            ]
-            _is_reset = any(sig in customer_query.lower() for sig in _RESET_SIGNALS)
-            if _is_reset:
-                old_body = session.active_filters.get("body_type")
-                if "body_type" not in new_filters and old_body:
-                    print(f"[Session] Clearing stale body_type='{old_body}' — reset signal.")
-                    session.active_filters.pop("body_type", None)
-                old_model = session.active_filters.get("model_family")
-                if "model_family" not in new_filters and old_model:
-                    print(f"[Session] Clearing stale model_family='{old_model}' — reset signal.")
-                    session.active_filters.pop("model_family", None)
-                if "max_price" not in new_filters and "min_price" not in new_filters:
-                    if session.active_filters.get("max_price") or session.active_filters.get("min_price"):
-                        print("[Session] Clearing stale price filters — reset signal.")
+                if v == "CLEAR":
+                    print(f"[Session] Clearing filter '{k}' as requested by LLM.")
+                    session.active_filters.pop(k, None)
+                    if k in ["max_price", "min_price"]:
                         session.reset_price_filters()
+                elif v is not None and v != "" and v != 0:
+                    session.active_filters[k] = v
 
             # Carry persistent body/model context into the retriever so that
             # "budget 100k" after "family car" queries GV80s under 100k, not all cars.
             persistent_body  = session.active_filters.get("body_type")
             persistent_model = session.active_filters.get("model_family")
+            persistent_sort  = session.active_filters.get("sort_by")
 
             t_rag_start    = time.perf_counter()
             retrieved_cars = retriever.query(
                 rewritten_query,
                 n_results=RAG_TOP_K,
                 body_filter=persistent_body,
-                model_filter=persistent_model
+                model_filter=persistent_model,
+                sort_by=persistent_sort
             )
 
             # If strict metadata filters returned 0 results, do a fallback closest-match query.
@@ -329,6 +270,7 @@ async def main():
                     n_results=2,
                     body_filter=persistent_body,    # keep body type (SUV, Sedan, etc.)
                     model_filter=persistent_model,  # keep model family if present
+                    sort_by=persistent_sort,        # keep sorting preference!
                     ignore_filters=True             # drop the price where-clause
                 )
                 
@@ -361,9 +303,8 @@ async def main():
             retrieved_cars = []
             
         else:
-            # AFFIRMATION, SMALLTALK, FEATURE_QUESTION, PRICE_QUESTION
-            # No new RAG query. But carry over the last retrieved cars from the session
-            # so the LLM remains grounded and doesn't hallucinate non-existent inventory.
+            # AFFIRMATION, SMALLTALK, CONFUSION, SUMMARY, FILTER_PREVIOUS
+            # No new RAG query needed. Just use last known inventory context.
             retrieved_cars = session.last_retrieved_cars
 
         # 5. Call session.add_user(customer_query)

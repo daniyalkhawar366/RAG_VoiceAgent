@@ -22,6 +22,9 @@ NEEDS_CONTEXT      - customer asks about a property of a SPECIFIC vehicle but no
 
 PRICE_QUESTION     - customer asks about the price, cost, or value of a specific Genesis vehicle in the inventory (e.g. "how much does the G80 cost?", "what is the price?")
 COMPARISON         - customer wants to compare two or more cars
+FILTER_PREVIOUS    - customer explicitly asks to filter, sort, or select from the PREVIOUSLY provided options.
+                     Examples: "which of those is the cheapest?", "the red one from those options",
+                     "the first one you mentioned", "cheapest one from the options you gave"
 AFFIRMATION        - customer said yes, okay, sure, go ahead, tell me more
 SMALLTALK          - greetings or basic conversational check-ins (e.g. "hello", "hi", "how are you", "who are you")
 CONFUSION          - customer says they don't understand, are confused, or asks you to explain differently

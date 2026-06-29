@@ -111,7 +111,7 @@ class Retriever:
         self.client = chromadb.PersistentClient(path=DB_PATH)
         self.collection = self.client.get_collection(name="car_inventory")
         
-    def query(self, query_text, n_results=3, model_filter=None, body_filter=None, ignore_filters=False):
+    def query(self, query_text, n_results=3, model_filter=None, body_filter=None, sort_by=None, ignore_filters=False):
         """
         Queries the ChromaDB vector database using metadata-aware filters, hybrid sorting,
         model post-filtering, and post-retrieval color reranking.
@@ -122,17 +122,14 @@ class Retriever:
         if ignore_filters:
             where_clause = None
         
-        # Determine sorting preference
-        is_cheapest = any(word in query_lower for word in ["cheapest", "cheap", "most affordable", "lowest price", "least expensive", "budget"])
-        is_expensive = any(word in query_lower for word in ["most expensive", "highest price", "priciest", "costliest", "expensive"])
+        # Determine sorting preference driven entirely by LLM context
+        is_cheapest = (sort_by == "price_asc")
+        is_expensive = (sort_by == "price_desc")
         
-        # Resolve target model (either from model_filter context or directly inside query text)
+        # Target model is provided strictly by the LLM filter context
         target_model = model_filter
-        if not target_model:
-            for m_name in ["gv80", "g80", "g90", "gv70", "g70", "gv60"]:
-                if m_name in query_lower:
-                    target_model = m_name
-                    break
+        if isinstance(target_model, str) and target_model.lower().strip() == "genesis":
+            target_model = None
         
         if where_clause:
             print(f"[RAG Info] Applied Metadata Filter: {where_clause}")
@@ -175,7 +172,28 @@ class Retriever:
                 
                 # Apply model filter
                 if target_model:
-                    valid_matches = [m for m in valid_matches if target_model.lower() in m["metadata"]["name"].lower()]
+                    if isinstance(target_model, list):
+                        # Group by model and find the cheapest/most expensive for EACH model
+                        model_matches = []
+                        for t in target_model:
+                            t_matches = [m for m in valid_matches if str(t).lower() in m["metadata"]["name"].lower()]
+                            if is_cheapest:
+                                t_matches.sort(key=lambda x: x["metadata"]["price_sar"])
+                            else:
+                                t_matches.sort(key=lambda x: x["metadata"]["price_sar"], reverse=True)
+                            model_matches.append(t_matches)
+                        
+                        # Interleave to ensure diverse representation
+                        interleaved = []
+                        max_len = max((len(l) for l in model_matches), default=0)
+                        for i in range(max_len):
+                            for t_list in model_matches:
+                                if i < len(t_list):
+                                    if t_list[i] not in interleaved:
+                                        interleaved.append(t_list[i])
+                        return interleaved[:n_results]
+                    else:
+                        valid_matches = [m for m in valid_matches if str(target_model).lower() in m["metadata"]["name"].lower()]
                 
                 if is_cheapest:
                     valid_matches.sort(key=lambda x: x["metadata"]["price_sar"])
@@ -184,7 +202,7 @@ class Retriever:
                 return valid_matches[:n_results]
 
         # Query a wider pool of results if model filter is active
-        query_limit = RAG_MODEL_FILTER_LIMIT if target_model else n_results
+        query_limit = 100 if target_model else n_results
         
         if where_clause:
             results = self.collection.query(
@@ -227,9 +245,25 @@ class Retriever:
                     "distance": dist
                 })
         
-        # Apply model filter
+        # Apply model filter with diverse representation
         if target_model and matches:
-            matches = [m for m in matches if target_model.lower() in m["metadata"]["name"].lower()]
+            if isinstance(target_model, list):
+                # Interleave results from each target model to ensure representation regardless of semantic skew
+                model_matches = []
+                for t in target_model:
+                    t_matches = [m for m in matches if str(t).lower() in m["metadata"]["name"].lower()]
+                    model_matches.append(t_matches)
+                
+                interleaved = []
+                max_len = max((len(l) for l in model_matches), default=0)
+                for i in range(max_len):
+                    for t_list in model_matches:
+                        if i < len(t_list):
+                            if t_list[i] not in interleaved:
+                                interleaved.append(t_list[i])
+                matches = interleaved
+            else:
+                matches = [m for m in matches if str(target_model).lower() in m["metadata"]["name"].lower()]
 
         # --- Similarity threshold gate ---
         # ONLY apply when no metadata where_clause was used.

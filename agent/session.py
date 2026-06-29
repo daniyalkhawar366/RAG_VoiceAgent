@@ -67,13 +67,23 @@ class ConversationSession:
             max_p = self.active_filters.get("max_price")
             min_p = self.active_filters.get("min_price")
             if max_p:
+                try:
+                    max_p_int = int(max_p)
+                    formatted_max = f"{max_p_int:,}"
+                except ValueError:
+                    formatted_max = str(max_p)
                 parts.append(
                     f"CUSTOMER BUDGET CONSTRAINT: Customer stated a maximum budget of "
-                    f"{max_p:,} SAR. Do NOT claim any car priced above this fits their budget."
+                    f"{formatted_max} SAR. Do NOT claim any car priced above this fits their budget."
                 )
             if min_p:
+                try:
+                    min_p_int = int(min_p)
+                    formatted_min = f"{min_p_int:,}"
+                except ValueError:
+                    formatted_min = str(min_p)
                 parts.append(
-                    f"CUSTOMER MINIMUM PRICE: Customer wants vehicles priced at least {min_p:,} SAR."
+                    f"CUSTOMER MINIMUM PRICE: Customer wants vehicles priced at least {formatted_min} SAR."
                 )
         return "\n".join(parts) if parts else "No specific vehicle in focus yet."
 

@@ -51,6 +51,7 @@ class LLMAgent:
             os.getenv("GROQ_API_KEY"),
             os.getenv("GROQ_API_KEY2"),
             os.getenv("GROQ_API_KEY3"),
+            os.getenv("GEMINI_API_KEY"),
         ]
         self._api_keys = [k for k in all_keys if k]  # filter out missing keys
         self._key_index = 0                           # pointer into the key list
@@ -59,10 +60,10 @@ class LLMAgent:
         self.history    = []
 
         if not self.api_key:
-            print("\n[WARNING] No GROQ_API_KEY found in environment variables or .env file.")
+            print("\n[WARNING] No API keys found in environment variables or .env file.")
             print("The agent will fall back to a mock mode. Please verify your .env file.\n")
         else:
-            print(f"[LLM] Groq API initialized with {len(self._api_keys)} key(s), model '{self.model_name}'.")
+            print(f"[LLM] API initialized with {len(self._api_keys)} key(s), primary model '{self.model_name}'.")
 
     def _next_key(self) -> str:
         """Rotate to the next available API key (round-robin)."""
@@ -81,9 +82,20 @@ class LLMAgent:
         current_key = self.api_key
 
         while True:
+            # Check if this is a Gemini key (they typically start with AIza)
+            is_gemini = current_key.startswith("AIza")
+            
+            # Route to the correct endpoint
+            url_to_use = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" if is_gemini else url
+            
+            # Swap model name if routing to Gemini
+            payload_to_use = payload.copy()
+            if is_gemini:
+                payload_to_use["model"] = "gemini-2.0-flash"
+
             headers["Authorization"] = f"Bearer {current_key}"
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=timeout, stream=stream)
+                resp = requests.post(url_to_use, headers=headers, json=payload_to_use, timeout=timeout, stream=stream)
             except Exception as e:
                 raise e
 
@@ -193,19 +205,20 @@ class LLMAgent:
             parts.append(f"[Match {idx+1}] {doc} (URL: {url})")
         return "\n".join(parts)
 
-    def extract_filters(self, query: str) -> dict:
+    def extract_filters(self, customer_query: str, rewritten_query: str, session) -> dict:
         """
         Extracts structured filters from a search query using the LLM.
         Returns a dict with optional keys: model_family, body_type, max_price, min_price, color, fuel_type
+        Outputs "CLEAR" for stale filters.
         """
         if not self.api_key:
             return {}
 
         template = load_prompt("extract_filters.txt")
-        models_str = ", ".join([f'"{m}"' for m in AVAILABLE_MODELS_LIST]) if AVAILABLE_MODELS_LIST else '"GV80", "G80", "G90", "GV70", "G70", "GV60"'
         prompt = template.format(
-            AVAILABLE_MODELS_LIST_STR=models_str,
-            query=query
+            active_filters=session.active_filters if session else {},
+            customer_query=customer_query,
+            rewritten_query=rewritten_query
         )
 
         url = GROQ_API_URL
@@ -222,8 +235,10 @@ class LLMAgent:
             if response.status_code == 200:
                 result = response.json()
                 content = result["choices"][0]["message"]["content"].strip()
-                content = re.sub(r'^```json\s*|\s*```$', '', content, flags=re.IGNORECASE)
-                return json.loads(content)
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group(0))
+                return {}
             return {}
         except Exception as e:
             print(f"[LLM Error] Failed to extract filters: {e}")

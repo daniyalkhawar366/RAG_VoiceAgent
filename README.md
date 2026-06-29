@@ -104,15 +104,14 @@ To prevent conversational loops or mangled queries (such as stitching unrelated 
 
 ## 4. Suggested Demo Queries & Expected Answers
 
-Run `python agent/voice_loop.py` and test these scenarios to demonstrate the agent's capabilities:
+Run `python agent/voice_loop.py` and test these scenarios to demonstrate the agent's capabilities efficiently (minimizing repetitive API calls):
 
-| Scenario / Intent | What to Ask / Speak | ChromaDB Metadata Filter | Expected Agent Response |
-| :--- | :--- | :--- | :--- |
-| **Cheapest Model** | *"What is your cheapest model?"* | Programmatic Sort Ascending | Recommends the **G80 EV Advance** sedan at **99,000 Riyals**, followed by the **G80 2.5 Prestige** at **135,000 Riyals**. |
-| **Price Cap** | *"I want to see an SUV under 260k"* | `{"$and": [{"body_type": {"$eq": "SUV"}}, {"price_sar": {"$lte": 260000}}]}` | Retains only SUVs under 260k, matching the **GV80 2.5 Premium** for **235,000 Riyals**. |
-| **Price Ranges** | *"Show me cars between 100k and 150k"* | `{"$and": [{"price_sar": {"$gte": 100000}}, {"price_sar": {"$lte": 150000}}]}` | Identifies only cars in that budget range, recommending the **G80 2.5 Prestige** (135,000 SAR). |
-| **Conversational Memory** | *"Do you have a GV80?"* followed by *"yes, tell me more about it"* | Skips retrieval on affirmation ("yes") and follow-up ("more about it"); reuses last context. | Correctly maintains context on the GV80 and lists details or features of the retrieved GV80 cars without running new vector searches. |
-| **Hallucination Bound** | *"Do you have a convertible?"* | `{"body_type": {"$eq": "Coupe"}}` (or semantic search) | Bounded by database boundaries. Politely states no convertible is available, and suggests the **GV80 Coupe** or **G80 EV** sedan instead. |
+| Scenario / Intent | What to Ask / Speak | Expected Agent Response |
+| :--- | :--- | :--- |
+| **Price Filtering & Sorting** | *"What is your cheapest SUV?"* | Extracts body type and programmatic sort. Recommends the **GV80 2.5 Prestige** (135,000 SAR) and correctly states it is the lowest priced SUV. |
+| **Feature Extraction (RAG)** | *"Does the G80 have Apple CarPlay?"* | Dynamically triggers a RAG search for the G80, confirms it has Wireless Apple CarPlay based on live inventory, and mentions specific models in stock. |
+| **Hallucination Bound (Zero-Match)** | *"Do you have any GV70 models?"* | Queries the RAG database dynamically, finds 0 matches in the current inventory, and politely informs you that none are currently available. |
+| **Dynamic Out-of-Scope Handling** | *"What are your financing options?"* | The LLM dynamically classifies this as OUT_OF_SCOPE and safely replies that we only help with vehicle specifications and inventory, preventing hallucinations about APR or monthly payments. |
 
 ---
 

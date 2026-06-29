@@ -211,10 +211,9 @@ class AudioHandler:
             duration = len(data) / fs
             start_time = time.time()
             while self.is_playing:
-                # Add 0.3s padding to allow hardware buffers to fully flush the end of the sentence
-                if time.time() - start_time >= duration + 0.3:
+                if time.time() - start_time >= duration:
                     break
-                time.sleep(0.04)
+                time.sleep(0.02)
                 
             if not self.is_playing:
                 sd.stop()
