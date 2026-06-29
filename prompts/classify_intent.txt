@@ -9,6 +9,15 @@ INVENTORY_SEARCH   - customer wants to find, browse, or filter cars based on any
                      USE THIS whenever the customer is describing what they want, 
                      even if no specific model name is mentioned.
 
+VAGUE_SEARCH       - customer expresses a general desire to find a car but gives ZERO concrete constraints.
+                     No budget, no body type, no model name, no color, no specific feature mentioned.
+                     The query is purely emotional, functional, or lifestyle-based.
+                     Examples: "I need a family car", "something sporty", "what do you recommend?",
+                     "a good daily commute car", "impress my clients", "something nice",
+                     "I want a comfortable car", "good for road trips", "show me your best car".
+                     NEVER use this if the customer provides even ONE constraint (budget, body type, model,
+                     color, feature). A query like "cheapest family car" or "sporty SUV" is INVENTORY_SEARCH.
+
 FEATURE_QUESTION   - customer asks about a feature/spec AND an active car is known
 
 NEEDS_CONTEXT      - customer asks about a property of a SPECIFIC vehicle but no vehicle
@@ -43,6 +52,10 @@ EXIT               - customer wants to end the call
 CRITICAL RULE 1: If the customer's message contains search criteria such as budget, body type, 
 color preferences, or desired features — even without naming a model — always classify 
 as INVENTORY_SEARCH. A detailed preference description is never NEEDS_CONTEXT.
+
+CRITICAL RULE 3: Only classify as VAGUE_SEARCH when the query is a pure lifestyle/use-case
+statement with absolutely no filterable attributes. The moment any constraint exists
+(price, body style, model, color, feature keyword), use INVENTORY_SEARCH instead.
 
 CRITICAL RULE 2: If the customer's message explicitly names any Genesis model — {AVAILABLE_MODELS_LIST_STR}, 
 or any phonetic variant — NEVER classify as NEEDS_CONTEXT. The model is known from the query itself.

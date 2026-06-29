@@ -214,7 +214,7 @@ async def main():
 
         # Determine whether to execute RAG query based on intent
         # We now query RAG dynamically for all inventory and spec-related questions.
-        run_rag = intent in ["INVENTORY_SEARCH", "COMPARISON", "FEATURE_QUESTION", "PRICE_QUESTION"]        # Route based on intent
+        run_rag = intent in ["INVENTORY_SEARCH", "COMPARISON", "FEATURE_QUESTION", "PRICE_QUESTION"]
         retrieved_cars = []
         if intent == "EXIT":
             farewell = (
@@ -297,6 +297,10 @@ async def main():
             session.add_user(customer_query)
             session.add_assistant(response_text)
             continue
+            
+        elif intent == "VAGUE_SEARCH":
+            # Customer query is too vague — skip RAG, let LLM ask a follow-up question
+            retrieved_cars = []
             
         elif intent == "NEEDS_CONTEXT":
             # No RAG, no inventory — LLM asks which car they mean
