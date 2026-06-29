@@ -270,15 +270,19 @@ async def main():
             # For price objections always sort cheapest first regardless of session sort preference
             effective_sort = "price_asc" if intent == "PRICE_OBJECTION" else persistent_sort
 
-            # --- RAG Query Cache ---
-            # Key encodes every dimension that would change the result set.
-            _rag_key = hashlib.md5(
-                f"{rewritten_query}|{persistent_body}|{persistent_model}|{effective_sort}".encode()
-            ).hexdigest()
+            # --- RAG Query Cache (dual-key) ---
+            # Primary key: rewritten query (most specific)
+            # Fallback key: normalized original query (handles LLM rewriter variance like "car" vs "cars")
+            _rag_key      = hashlib.md5(f"{rewritten_query}|{persistent_body}|{persistent_model}|{effective_sort}".encode()).hexdigest()
+            _rag_key_orig = hashlib.md5(f"{customer_query.lower().strip()}|{persistent_body}|{persistent_model}|{effective_sort}".encode()).hexdigest()
 
             if _rag_key in _rag_cache:
-                print(f"[Cache] RAG cache HIT (key={_rag_key[:8]}...) — skipping vector search.")
+                print(f"[Cache] RAG cache HIT (rewritten key={_rag_key[:8]}...) \u2014 skipping vector search.")
                 retrieved_cars = _rag_cache[_rag_key]
+                t_rag = 0.0
+            elif _rag_key_orig in _rag_cache:
+                print(f"[Cache] RAG cache HIT (original key={_rag_key_orig[:8]}...) \u2014 skipping vector search.")
+                retrieved_cars = _rag_cache[_rag_key_orig]
                 t_rag = 0.0
             else:
                 t_rag_start    = time.perf_counter()
@@ -309,7 +313,8 @@ async def main():
                     car['metadata']['units_available'] = unit_counts.get(car['metadata']['name'], 1)
 
                 if retrieved_cars:
-                    _rag_cache[_rag_key] = retrieved_cars
+                    _rag_cache[_rag_key]      = retrieved_cars   # store under rewritten key
+                    _rag_cache[_rag_key_orig] = retrieved_cars   # store under original key too
                     print(f"[Cache] RAG result cached (key={_rag_key[:8]}..., {len(retrieved_cars)} car(s)).")
 
             session.last_retrieved_cars = retrieved_cars

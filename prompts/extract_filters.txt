@@ -10,7 +10,12 @@ Valid keys:
 - sort_by ("price_asc" if user wants the cheapest, most affordable, entry-level, lowest price, or is comparing prices. "price_desc" if user wants most expensive, flagship, top of the line.)
 
 CRITICAL CLEARING RULE: 
-If the customer's new query changes the subject, explicitly rejects an old filter, or asks a completely general question (e.g. "what is your cheapest car", "show me all cars"), you MUST output the exact string value "CLEAR" for any previously active filter that no longer applies.
+If the customer's new query changes the subject, explicitly rejects an old filter, or asks a completely neutral/general question with NO ordering intent (e.g. "show me all cars", "what do you have?"), you MUST output the exact string value "CLEAR" for any previously active filter that no longer applies.
+
+IMPORTANT EXCEPTION — Do NOT clear sort_by if:
+- The customer's query still contains any ordering intent: "cheapest", "most expensive", "lowest price", "entry level", "flagship", "top of the line", "most affordable", "priciest"
+- The customer is re-asking the same type of question as before
+Only clear sort_by if the customer explicitly switches direction (e.g., was asking cheapest → now asks most expensive) or asks a completely neutral question with zero price ordering.
 
 Price conversion rules:
 - "120k" or "120 thousand" → 120000
