@@ -68,7 +68,7 @@ Standard dense embeddings are poor at arithmetic comparisons (e.g. searching for
 To keep voice-to-voice response latency under 300ms, the orchestrator implements a producer-consumer pipeline:
 1.  **Groq Streaming**: Queries Groq with `"stream": true` and yields text chunks as they generate.
 2.  **Decimal-Aware Sentence Splitter**: Aggregates chunks and splits them on sentence boundaries using negative lookbehinds (e.g. `(?<!\d)\.(?!\d)`) to ensure specs like `"2.5T Royal"` or `"3.5T"` are not cut in half.
-3.  **Dual-Buffer Playback**: Pushes sentences to an async queue. A consumer task synthesizes them using Microsoft's `en-US-EmmaNeural` voice, alternating output files (`stream_response_1.mp3` and `stream_response_2.mp3`) to prevent write collisions.
+3.  **Dual-Buffer Playback**: Pushes sentences to an async queue. A consumer task synthesizes them using Microsoft's `en-US-AndrewNeural` voice, alternating output files (`stream_response_1.mp3` and `stream_response_2.mp3`) to prevent write collisions.
 4.  **Overlapped Execution**: Plays the current sentence in a background thread pool (`asyncio.to_thread`) while the next sentence is already synthesizing, creating a seamless, uninterrupted voice output.
 
 ### C. Dynamic Noise Floor VAD (`agent/audio.py`)
@@ -108,10 +108,10 @@ Run `python agent/voice_loop.py` and test these scenarios to demonstrate the age
 
 | Scenario / Intent | What to Ask / Speak | Expected Agent Response |
 | :--- | :--- | :--- |
-| **Price Filtering & Sorting** | *"What is your cheapest SUV?"* | Extracts body type and programmatic sort. Recommends the **GV80 2.5 Prestige** (135,000 SAR) and correctly states it is the lowest priced SUV. |
-| **Feature Extraction (RAG)** | *"Does the G80 have Apple CarPlay?"* | Dynamically triggers a RAG search for the G80, confirms it has Wireless Apple CarPlay based on live inventory, and mentions specific models in stock. |
-| **Hallucination Bound (Zero-Match)** | *"Do you have any GV70 models?"* | Queries the RAG database dynamically, finds 0 matches in the current inventory, and politely informs you that none are currently available. |
-| **Dynamic Out-of-Scope Handling** | *"What are your financing options?"* | The LLM dynamically classifies this as OUT_OF_SCOPE and safely replies that we only help with vehicle specifications and inventory, preventing hallucinations about APR or monthly payments. |
+| **Price Filtering & Sorting** | *"What is your cheapest SUV?"* | Extracts body type and programmatic sort. Recommends the **GV80 3.5 Royal** (205,000 SAR) and correctly states it is the lowest priced SUV in current inventory. |
+| **Feature Extraction (RAG)** | *"Does the G80 have Apple CarPlay?"* | Dynamically triggers a RAG search for the G80, confirms it has **Wireless Apple CarPlay** based on live inventory (e.g. G80 2.5 Prestige), and mentions specific models in stock. |
+| **Hallucination Bound (Zero-Match)** | *"Do you have any GV70 models?"* | Queries the RAG database dynamically, finds **0 matches** in the current inventory, and politely informs the caller that none are currently available. |
+| **Dynamic Out-of-Scope Handling** | *"What are your financing options?"* | The LLM classifies this as OUT_OF_SCOPE and safely replies that we only assist with vehicle specifications and live inventory, preventing hallucinations about APR or monthly payments. |
 
 ---
 
@@ -120,19 +120,37 @@ Run `python agent/voice_loop.py` and test these scenarios to demonstrate the age
 ### Step 1: Install Dependencies
 ```powershell
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 ### Step 2: Configure Environment
-Ensure your `.env` file in the root directory contains your active Groq API Key:
+Create a `.env` file in the root directory with your API keys:
 ```env
-GROQ_API_KEY=gsk_hx2...
+GROQ_API_KEY=gsk_...
+GOOGLE_STT_KEY=your_google_speech_api_key
 ```
 
-### Step 3: Run the Agent
+> **Optional:** Add `GROQ_API_KEY2` and `GROQ_API_KEY3` for automatic key rotation under rate limits.
+
+### Step 3: Scrape the Live Inventory
+This step downloads the vehicle listings from the Genesis CPO website and saves them to `data/cars.json`:
+```powershell
+python scraper/scrape.py
+```
+> Skip this step if `data/cars.json` already exists in the repo.
+
+### Step 4: Build the Vector Index
+This step embeds the scraped data into ChromaDB. **Must be run before starting the agent:**
+```powershell
+python rag/indexer.py
+```
+
+### Step 5: Run the Agent
 Run the main script:
 ```powershell
 python agent/voice_loop.py
 ```
-*   Wait for the voice welcome greeting to finish speaking: *"Hello! Thank you for calling Genesis Certified Pre-Owned. My name is the Genesis voice assistant. How can I help you today?"*
-*   Once `[Agent] Listening... (start speaking)` appears on the screen, speak into your microphone.
+*   The agent will ask whether to enable **barge-in** (interrupt mid-response by speaking). Enter `y` or `n`.
+*   Wait for the voice welcome greeting to finish: *"Hello! Thank you for calling Genesis CPO. I am Alex, your virtual assistant. How can I help you today?"*
+*   Press **Enter** to speak, or type your query directly.
 *   Say *"Goodbye"* or *"Exit"* to disconnect the call.
