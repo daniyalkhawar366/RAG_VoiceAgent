@@ -63,7 +63,10 @@ class LLMAgent:
             print("\n[WARNING] No API keys found in environment variables or .env file.")
             print("The agent will fall back to a mock mode. Please verify your .env file.\n")
         else:
-            print(f"[LLM] API initialized with {len(self._api_keys)} key(s), primary model '{self.model_name}'.")
+            groq_count   = sum(1 for k in self._api_keys if not k.startswith("AIza"))
+            gemini_count = sum(1 for k in self._api_keys if k.startswith("AIza"))
+            print(f"[LLM] API initialized: {groq_count} Groq key(s) + {gemini_count} Gemini key(s) "
+                  f"= {len(self._api_keys)} total. Primary model '{self.model_name}'.")
 
     def _next_key(self) -> str:
         """Rotate to the next available API key (round-robin)."""
@@ -465,11 +468,27 @@ Examples of good responses:
                 "role": "system",
                 "content": "IMPORTANT: The customer is asking a vehicle-specific question but no vehicle is currently in focus. You MUST reply with EXACTLY: \"I'd be happy to help with that. Which Genesis model were you asking about?\" Do not provide any other answer."
             })
+        elif intent == "PRICE_OBJECTION":
+            messages.append({
+                "role": "system",
+                "content": "PRICE OBJECTION HANDLING: The customer has indicated the current price is too high. Follow this structure strictly: (1) Lead with ONE short empathetic sentence — acknowledge their concern warmly, not defensively. (2) Present the retrieved cheaper alternatives from INVENTORY RETRIEVED THIS TURN, highlighting their best value features. (3) Never claim the original car 'fits their budget'. Frame new options positively — what they GAIN, not what they lose. Keep total response to 3 sentences max."
+            })
         elif retrieved_cars:
             messages.append({
                 "role": "system",
                 "content": "CRITICAL DIRECTION: You are strictly forbidden from recommending, proposing, or mentioning any vehicle models, years, prices, colors, or specifications that are not explicitly listed in the RETRIEVED LIVE INVENTORY MATCHES context above. If no vehicle in the inventory meets their budget, recommend the closest match from the inventory list, state its real price, and EXPLICITLY state it exceeds the customer's budget. Do not invent any vehicles or prices. Stick strictly to the available inventory in context."
             })
+
+        # Hard model restriction — always appended, prevents hallucinating non-stocked models
+        stocked_models_str = ", ".join(sorted(AVAILABLE_MODELS_LIST)) if AVAILABLE_MODELS_LIST else "GV80, G80, G90, GV80 Coupe"
+        messages.append({
+            "role": "system",
+            "content": (
+                f"ABSOLUTE MODEL RESTRICTION: The ONLY Genesis models currently stocked in our CPO inventory are: {stocked_models_str}. "
+                "You must NEVER mention, suggest, or refer to any other Genesis model (e.g. GV70, G70, GV60, GV50, GV30 are NOT in our inventory). "
+                "If a customer asks about a model not on this list, say it is not currently available in our CPO inventory."
+            )
+        })
 
         payload = {
             "model": self.model_name,
@@ -519,6 +538,12 @@ Examples of good responses:
                 context_str += f"\n[Car Match {idx+1}]\n"
                 context_str += f"Description: {res['document']}\n"
                 context_str += f"Detail Link: {res['metadata'].get('url', 'N/A')}\n"
+                units = res['metadata'].get('units_available', None)
+                if units is not None:
+                    if units == 1:
+                        context_str += "Availability: LAST UNIT IN STOCK\n"
+                    else:
+                        context_str += f"Availability: {units} units in stock\n"
         else:
             context_str += "No live inventory matches found for this query.\n"
         return context_str

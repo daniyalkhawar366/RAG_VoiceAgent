@@ -13,6 +13,7 @@ chroma_db/
 
 # Local media / temporary data files
 data/temp/
+data/tts_cache/
 data/test_speech.wav
 data/test_tts.mp3
 data/customer_input.wav

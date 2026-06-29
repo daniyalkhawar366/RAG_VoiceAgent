@@ -35,6 +35,11 @@ FILTER_PREVIOUS    - customer explicitly asks to filter, sort, or select from th
                      Examples: "which of those is the cheapest?", "the red one from those options",
                      "the first one you mentioned", "cheapest one from the options you gave"
 AFFIRMATION        - customer said yes, okay, sure, go ahead, tell me more
+PRICE_OBJECTION    - customer indicates the price is too high, out of budget, or too expensive.
+                     Examples: "that's too expensive", "I can't afford that", "that's out of my budget",
+                     "do you have anything cheaper?", "too pricey", "that's a lot", "anything more affordable?",
+                     "way over my budget", "can you show me something less expensive?"
+                     Use this when the customer is reacting negatively to a price they just heard.
 SMALLTALK          - greetings or basic conversational check-ins (e.g. "hello", "hi", "how are you", "who are you")
 CONFUSION          - customer says they don't understand, are confused, or asks you to explain differently
 SUMMARY            - customer asks to summarize the conversation or what cars they liked so far

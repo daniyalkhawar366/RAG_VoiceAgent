@@ -1,10 +1,16 @@
 import os
 import sys
 import re
+import json
 import time
+import hashlib
+import shutil
 import asyncio
 import threading
 import edge_tts
+
+# In-memory RAG query cache: hash(query+filters) -> retrieved_cars list
+_rag_cache: dict = {}
 
 # Add project root to path to ensure clean imports
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,6 +62,17 @@ async def main():
         print(f"[System] Error loading Retriever: {e}")
         print("[System] Make sure you have run 'python rag/indexer.py' first.")
         return
+
+    # Precompute unit availability counts from cars.json (used for scarcity signals)
+    unit_counts = {}
+    try:
+        with open(os.path.join(BASE_DIR, "data", "cars.json"), encoding="utf-8") as _f:
+            for _c in json.load(_f):
+                n = _c.get("name", "")
+                unit_counts[n] = unit_counts.get(n, 0) + 1
+        print(f"[System] Unit availability precomputed for {len(unit_counts)} vehicle variants.")
+    except Exception as _e:
+        print(f"[System Warning] Could not precompute unit counts: {_e}")
 
     # 2. Initialize LLM Agent
     print("[System] Initializing LLM agent...")
@@ -214,7 +231,7 @@ async def main():
 
         # Determine whether to execute RAG query based on intent
         # We now query RAG dynamically for all inventory and spec-related questions.
-        run_rag = intent in ["INVENTORY_SEARCH", "COMPARISON", "FEATURE_QUESTION", "PRICE_QUESTION"]
+        run_rag = intent in ["INVENTORY_SEARCH", "COMPARISON", "FEATURE_QUESTION", "PRICE_QUESTION", "PRICE_OBJECTION"]
         retrieved_cars = []
         if intent == "EXIT":
             farewell = (
@@ -250,33 +267,52 @@ async def main():
             persistent_model = session.active_filters.get("model_family")
             persistent_sort  = session.active_filters.get("sort_by")
 
-            t_rag_start    = time.perf_counter()
-            retrieved_cars = retriever.query(
-                rewritten_query,
-                n_results=RAG_TOP_K,
-                body_filter=persistent_body,
-                model_filter=persistent_model,
-                sort_by=persistent_sort
-            )
+            # For price objections always sort cheapest first regardless of session sort preference
+            effective_sort = "price_asc" if intent == "PRICE_OBJECTION" else persistent_sort
 
-            # If strict metadata filters returned 0 results, do a fallback closest-match query.
-            # IMPORTANT: keep body_type filter but DROP price filter so we get the closest
-            # on-brand car (e.g. cheapest SUV we carry) rather than a random off-body car.
-            # The LLM system prompt (RULE H) will still tell the customer it exceeds their budget.
-            if not retrieved_cars:
-                print("[RAG] 0 exact matches found. Falling back to body-type-only query...")
+            # --- RAG Query Cache ---
+            # Key encodes every dimension that would change the result set.
+            _rag_key = hashlib.md5(
+                f"{rewritten_query}|{persistent_body}|{persistent_model}|{effective_sort}".encode()
+            ).hexdigest()
+
+            if _rag_key in _rag_cache:
+                print(f"[Cache] RAG cache HIT (key={_rag_key[:8]}...) — skipping vector search.")
+                retrieved_cars = _rag_cache[_rag_key]
+                t_rag = 0.0
+            else:
+                t_rag_start    = time.perf_counter()
                 retrieved_cars = retriever.query(
                     rewritten_query,
-                    n_results=2,
-                    body_filter=persistent_body,    # keep body type (SUV, Sedan, etc.)
-                    model_filter=persistent_model,  # keep model family if present
-                    sort_by=persistent_sort,        # keep sorting preference!
-                    ignore_filters=True             # drop the price where-clause
+                    n_results=RAG_TOP_K,
+                    body_filter=persistent_body,
+                    model_filter=persistent_model,
+                    sort_by=effective_sort
                 )
-                
-            t_rag = time.perf_counter() - t_rag_start
-            session.last_retrieved_cars = retrieved_cars
 
+                # Fallback: drop price filter, keep body/model, keep sort
+                if not retrieved_cars:
+                    print("[RAG] 0 exact matches found. Falling back to body-type-only query...")
+                    retrieved_cars = retriever.query(
+                        rewritten_query,
+                        n_results=2,
+                        body_filter=persistent_body,
+                        model_filter=persistent_model,
+                        sort_by=effective_sort,
+                        ignore_filters=True
+                    )
+
+                t_rag = time.perf_counter() - t_rag_start
+
+                # Annotate with unit counts BEFORE caching so the cache holds enriched results
+                for car in retrieved_cars:
+                    car['metadata']['units_available'] = unit_counts.get(car['metadata']['name'], 1)
+
+                if retrieved_cars:
+                    _rag_cache[_rag_key] = retrieved_cars
+                    print(f"[Cache] RAG result cached (key={_rag_key[:8]}..., {len(retrieved_cars)} car(s)).")
+
+            session.last_retrieved_cars = retrieved_cars
 
             print(f"\n[RAG] Retrieved {len(retrieved_cars)} result(s) in {t_rag*1000:.0f}ms:")
             print("-" * 40)
@@ -381,6 +417,10 @@ async def main():
         playback_queue = asyncio.Queue()
         spoken_sentences = []
 
+        # Persistent TTS cache directory — survives across agent restarts
+        tts_cache_dir = os.path.join(BASE_DIR, "data", "tts_cache")
+        os.makedirs(tts_cache_dir, exist_ok=True)
+
         async def tts_synthesizer():
             file_idx = 0
             while True:
@@ -393,28 +433,38 @@ async def main():
                 if not any(c.isalnum() for c in sentence):
                     continue
 
-                temp_file = os.path.join(temp_dir, f"tts_sentence_{file_idx}.mp3")
-                file_idx += 1
+                # --- TTS Cache ---
+                tts_hash = hashlib.md5(f"{sentence}|{VOICE_NAME}|{VOICE_RATE}".encode()).hexdigest()
+                cached_tts_path = os.path.join(tts_cache_dir, f"{tts_hash}.mp3")
 
-                try:
-                    communicate = edge_tts.Communicate(sentence, VOICE_NAME, rate=VOICE_RATE)
-                    await communicate.save(temp_file)
-                    await playback_queue.put((temp_file, sentence))
-                except Exception as e:
-                    print(f"\n[TTS Error] Failed to synthesize sentence '{sentence}': {e}")
+                if os.path.exists(cached_tts_path):
+                    print(f"[TTS Cache] HIT — reusing cached audio.")
+                    await playback_queue.put((cached_tts_path, sentence, True))  # True = is_cached
+                else:
+                    temp_file = os.path.join(temp_dir, f"tts_sentence_{file_idx}.mp3")
+                    file_idx += 1
+                    try:
+                        communicate = edge_tts.Communicate(sentence, VOICE_NAME, rate=VOICE_RATE)
+                        await communicate.save(temp_file)
+                        # Persist to cache for future sessions
+                        shutil.copy(temp_file, cached_tts_path)
+                        await playback_queue.put((temp_file, sentence, False))  # False = not cached, delete after
+                    except Exception as e:
+                        print(f"\n[TTS Error] Failed to synthesize sentence '{sentence}': {e}")
 
         async def audio_playback_worker():
             while True:
                 item = await playback_queue.get()
                 if item is None:
                     break
-                temp_file, sentence = item
-                await asyncio.to_thread(audio_handler.play_mp3_mci, temp_file)
+                filepath, sentence, is_cached = item
+                await asyncio.to_thread(audio_handler.play_mp3_mci, filepath)
                 spoken_sentences.append(sentence)
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
+                if not is_cached:  # Only delete temp files; never delete the persistent cache
+                    try:
+                        os.remove(filepath)
+                    except Exception:
+                        pass
 
         print("\n[Agent] ", end="", flush=True)
         
