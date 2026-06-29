@@ -1,0 +1,10 @@
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.26.0
+edge-tts>=6.1.12
+python-dotenv>=1.0.1
+requests>=2.31.0
+chromadb>=0.5.23
+rapidfuzz>=3.0.0
+colorama>=0.4.6
+playwright>=1.44.0

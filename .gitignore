@@ -1,0 +1,26 @@
+# Environment variables
+.env
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Databases
+chroma_db/
+
+# Local media / temporary data files
+data/temp/
+data/test_speech.wav
+data/test_tts.mp3
+data/customer_input.wav
+*.mp3
+*.wav
+
+# IDE / System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
